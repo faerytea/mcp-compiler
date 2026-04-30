@@ -1,7 +1,6 @@
 package name.faerytea.mcp.example
 
 import name.faerytea.mcp.annotations.Description
-import name.faerytea.mcp.annotations.SafeTool
 import name.faerytea.mcp.annotations.Tool
 import name.faerytea.mcp.annotations.ToolAnnotation
 import java.net.URL

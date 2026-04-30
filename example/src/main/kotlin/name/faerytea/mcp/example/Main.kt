@@ -13,6 +13,7 @@ import io.modelcontextprotocol.kotlin.sdk.server.mcpStatelessStreamableHttp
 import io.modelcontextprotocol.kotlin.sdk.types.Implementation
 import io.modelcontextprotocol.kotlin.sdk.types.ServerCapabilities
 import org.slf4j.event.Level
+import java.nio.file.Files
 
 fun main() {
     val server = Server(
@@ -22,7 +23,7 @@ fun main() {
         ),
         ServerOptions(
             capabilities = ServerCapabilities(
-                ServerCapabilities.Tools(true)
+                ServerCapabilities.Tools()
             )
         )
     )
@@ -31,7 +32,17 @@ fun main() {
     addReadFile2ToolTo(server)
     addAggregateToolTo(server)
     addFetchToolTo(server)
-    Mem.addRememberToolTo(server)
+    Mem.apply {
+        addRememberToolTo(server)
+        addRecallToolTo(server)
+        addRecallKeysToolTo(server)
+    }
+    FileMem(Files.createTempFile("test-mem", ".txt")).apply {
+        addRememberToolTo(server) { "$it-file" }
+        addRecallToolTo(server) { "$it-file" }
+        addRecallKeysToolTo(server) { "$it-file" }
+    }
+//    server.addReso
 
     embeddedServer(CIO, 8088) {
         install(CallLogging) {

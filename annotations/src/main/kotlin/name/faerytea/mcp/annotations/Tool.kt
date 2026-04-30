@@ -6,9 +6,6 @@ package name.faerytea.mcp.annotations
  * `add<FunctionName>Tool(server: Server)` function
  * will be generated.
  *
- * Only top level functions and `object` members
- * are supported.
- *
  * @see SafeTool
  */
 @Target(AnnotationTarget.FUNCTION)

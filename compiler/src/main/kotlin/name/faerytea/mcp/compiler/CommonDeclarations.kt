@@ -1,20 +1,19 @@
 package name.faerytea.mcp.compiler
 
 import com.google.devtools.ksp.symbol.KSClassDeclaration
-import com.google.devtools.ksp.symbol.KSFunctionDeclaration
+import com.google.devtools.ksp.symbol.KSType
 import com.squareup.kotlinpoet.ClassName
 import com.squareup.kotlinpoet.MemberName
-import name.faerytea.mcp.annotations.Tool
 
 data class CommonDeclarations(
-    val server: KSClassDeclaration,
-    val toolSchema: KSClassDeclaration,
-    val toolAnnotations: KSClassDeclaration,
-    val contentBlock: KSClassDeclaration,
+    val server: ClassName,
+    val toolSchema: ClassName,
+    val toolAnnotations: ClassName,
+    val contentBlock: KSType,
     val mediaContent: KSClassDeclaration,
-    val mediaContentText: KSClassDeclaration,
-    val callToolResult: KSClassDeclaration,
-    val requestMeta: KSClassDeclaration,
+    val mediaContentText: ClassName,
+    val callToolResult: ClassName,
+    val requestMetaNullable: KSType,
     val taskSupport: ClassName,
     val toolExecution: ClassName,
     val error: MemberName,
