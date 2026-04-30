@@ -3,7 +3,7 @@ plugins {
     alias(libs.plugins.maven.publish)
 }
 
-group = "name.faerytea.mcp.annotations"
+group = "name.faerytea.mcp.compiler"
 version = "0.1.0"
 
 kotlin {
