@@ -9,6 +9,7 @@ kotlinxSerializationJSON = "1.11.0"
 kotlinxCoroutines = "1.10.2"
 ksp = "2.3.6"
 kotlinPoet = "2.3.0"
+mavenPub = "0.36.0"
 
 [libraries]
 kotlinGradlePlugin = { module = "org.jetbrains.kotlin:kotlin-gradle-plugin", version.ref = "kotlin" }
@@ -26,3 +27,4 @@ kotlinxEcosystem = ["kotlinxDatetime", "kotlinxSerialization", "kotlinxCoroutine
 [plugins]
 kotlinPluginSerialization = { id = "org.jetbrains.kotlin.plugin.serialization", version.ref = "kotlin" }
 ksp = { id = "com.google.devtools.ksp", version.ref = "ksp" }
+maven-publish = { id = "com.vanniktech.maven.publish", version.ref = "mavenPub" }
