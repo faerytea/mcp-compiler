@@ -42,7 +42,6 @@ fun main() {
         addRecallToolTo(server) { "$it-file" }
         addRecallKeysToolTo(server) { "$it-file" }
     }
-//    server.addReso
 
     embeddedServer(CIO, 8088) {
         install(CallLogging) {

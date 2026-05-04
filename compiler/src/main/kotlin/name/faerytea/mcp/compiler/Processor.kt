@@ -11,6 +11,8 @@ import com.squareup.kotlinpoet.ksp.toClassName
 import com.squareup.kotlinpoet.ksp.toTypeName
 import com.squareup.kotlinpoet.ksp.writeTo
 import name.faerytea.mcp.annotations.Description
+import name.faerytea.mcp.annotations.ResourceAnnotation
+import name.faerytea.mcp.annotations.ResourceTemplate
 import name.faerytea.mcp.annotations.SafeTool
 import name.faerytea.mcp.annotations.Tool
 import name.faerytea.mcp.annotations.ToolAnnotation
@@ -71,6 +73,10 @@ class Processor(
             val requestMetaCD = resolver.getClassDeclarationByName("io.modelcontextprotocol.kotlin.sdk.types.RequestMeta")
             val taskSupportCD = resolver.getClassDeclarationByName("io.modelcontextprotocol.kotlin.sdk.types.TaskSupport")
             val toolExecutionCD = resolver.getClassDeclarationByName("io.modelcontextprotocol.kotlin.sdk.types.ToolExecution")
+            val resourceTemplateCD = resolver.getClassDeclarationByName("io.modelcontextprotocol.kotlin.sdk.types.ResourceTemplate")
+            val readResourceResultCD = resolver.getClassDeclarationByName("io.modelcontextprotocol.kotlin.sdk.types.ReadResourceResult")
+            val resourceContentsCD = resolver.getClassDeclarationByName("io.modelcontextprotocol.kotlin.sdk.types.ResourceContents")
+            val textResourceContentsCD = resolver.getClassDeclarationByName("io.modelcontextprotocol.kotlin.sdk.types.TextResourceContents")
             if (serverCD == null
                 || toolSchemaCD == null
                 || toolAnnotationsCD == null
@@ -81,6 +87,10 @@ class Processor(
                 || requestMetaCD == null
                 || taskSupportCD == null
                 || toolExecutionCD == null
+                || resourceTemplateCD == null
+                || readResourceResultCD == null
+                || resourceContentsCD == null
+                || textResourceContentsCD == null
             ) {
                 logger.error("Cannot find required MCP declarations")
                 return false
@@ -110,6 +120,10 @@ class Processor(
                 taskSupport = taskSupportCD.toClassName(),
                 toolExecution = toolExecutionCD.toClassName(),
                 error = errorMN,
+                resourceTemplate = resourceTemplateCD.toClassName(),
+                readResourceResult = readResourceResultCD.toClassName(),
+                resourceContents = resourceContentsCD.asType(emptyList()),
+                textResourceContents = textResourceContentsCD.toClassName(),
             )
         }
         return true
@@ -122,11 +136,6 @@ class Processor(
                 resolver.getSymbolsWithAnnotation(TOOL)
               + resolver.getSymbolsWithAnnotation(SAFE_TOOL)
                 )
-            .map {
-                it.also {
-                    logger.info("Looking at ${it::class} in ${it.containingFile}", it)
-                }
-            }
             .filterIsInstance<KSFunctionDeclaration>()
             .groupBy { it.containingFile }
         logger.info("Found ${declaredTools.size} tool files")
@@ -381,7 +390,7 @@ class Processor(
                     receiver(functionParentDeclarationCN)
                 }
             }
-            .addKdoc("@see %M", function.toMemberName())
+            .addKdoc("@see %M\n", function.toMemberName())
             .returns(Unit::class)
             .addAnnotation(
                 AnnotationSpec.builder(Generated::class)
@@ -553,12 +562,181 @@ class Processor(
         return this
     }
 
+    private val uriTemplateVariable = Regex("\\{[^{}]+}")
+
+    @OptIn(KspExperimental::class)
+    fun genResourceSpec(function: KSFunctionDeclaration): FunSpec? {
+        val resAnnotation = function.getAnnotationsByType(ResourceTemplate::class).first()
+        // no real parser since L1 is too simple
+        val foundParams = uriTemplateVariable.findAll(resAnnotation.value)
+            .map { resAnnotation.value.substring(it.range) }
+            .toSet()
+        var meta: KSValueParameter? = null
+        val conversions = LinkedHashMap<String, String>()
+        for (arg in function.parameters) {
+            val argName = arg.name!!.asString() // nameless arguments in functions aren't allowed
+            // filter out _meta
+            if (argName == "_meta") {
+                if (arg.type.resolve() != commonDeclarations.requestMetaNullable) {
+                    logger.error("Request \$meta field must have type 'RequestMeta?'", arg)
+                    return null
+                }
+                meta = arg
+                continue
+            }
+            // constant arguments
+            if (argName !in foundParams) {
+                if (arg.hasDefault) {
+                    logger.warn("Parameter $argName will always have a default value", arg)
+                    continue
+                } else {
+                    logger.error("Parameter $argName is not defined in template", arg)
+                    return null
+                }
+            }
+            // simple scalar conversions
+            // TODO: complex types (at least list and map) for L4 templates
+            conversions[argName] = when (arg.type.resolve()) {
+                kotlinTypes.charSequenceType,
+                kotlinTypes.builtIns.stringType -> ""
+                kotlinTypes.builtIns.byteType -> ".toByte()"
+                kotlinTypes.builtIns.shortType -> ".toShort()"
+                kotlinTypes.builtIns.intType -> ".toInt()"
+                kotlinTypes.builtIns.longType -> ".toLong()"
+                kotlinTypes.builtIns.floatType -> ".toFloat()"
+                kotlinTypes.builtIns.doubleType -> ".toDouble()"
+                else -> {
+                    logger.error("Unsupported type", arg)
+                    return null
+                }
+            }
+        }
+        val diff = foundParams - conversions.keys
+        if (diff.isNotEmpty()) {
+            logger.error("Parameters from template aren't present in arguments: $diff", function)
+            return null
+        }
+        val retTp = function.returnType?.resolve() ?: run {
+            logger.warn("Cannot find return type (not generated yet?)", function)
+            return null
+        }
+        val retCode = when {
+            kotlinTypes.builtIns.stringType == retTp ->
+                CodeBlock.of(
+                    "%T(listOf(%T(result)))\n",
+                    commonDeclarations.readResourceResult,
+                    commonDeclarations.textResourceContents,
+                )
+            commonDeclarations.readResourceResult == retTp.toClassName() -> CodeBlock.of("result\n")
+            commonDeclarations.resourceContents.isAssignableFrom(retTp) ->
+                CodeBlock.of("%T(listOf(result))\n", commonDeclarations.readResourceResult)
+            else -> {
+                logger.error("Incompatible return type (not String nor ResourceContents nor ReadResourceResult)", function)
+                return null
+            }
+        }
+        val functionName = function.simpleName.asString()
+        return FunSpec.builder("add${functionName.myCapitalize()}ResTemplateTo")
+            .addParameter("server", commonDeclarations.server)
+            .addParameter(
+                ParameterSpec.builder("meta", jsonObjectNullable)
+                    .defaultValue("null")
+                    .build()
+            )
+            .apply {
+                (function.parentDeclaration as? KSClassDeclaration)?.let {
+                    receiver(it.toClassName())
+                }
+            }
+            .addKdoc("@see %M\n", function.toMemberName())
+            .returns(Unit::class)
+            .addAnnotation(
+                AnnotationSpec.builder(Generated::class)
+                    .addMember("%S", "name.faerytea.mcp.compiler.Processor")
+                    .build()
+            )
+            .addModifiers(KModifier.PUBLIC)
+            .addCode(
+                CodeBlock.builder()
+                    .add("server.addResourceTemplate(\n")
+                    .withIndent {
+                        add("template = %T(\n")
+                        withIndent {
+                            addStatement("uriTemplate = %S,", resAnnotation.value)
+                            val name = resAnnotation.name.takeUnless { it.isBlank() } ?: functionName
+                            addStatement("name = %S,", name)
+                            function.docString.takeUnless { it.isNullOrBlank() }?.let {
+                                addStatement("description = %S,", it)
+                            }
+                            resAnnotation.mimeType.takeUnless { it.isBlank() }?.let {
+                                addStatement("mimeType = %S,", it)
+                            }
+                            resAnnotation.title.takeUnless { it.isBlank() }?.let {
+                                addStatement("title = %S,", it)
+                            }
+                            if (!resAnnotation.annotations.priority.isNaN() || resAnnotation.annotations.audience.isNotEmpty()) {
+                                // TODO wip
+                            }
+                            if (resAnnotation.icons.isNotEmpty()) {
+                                add("icons = listOf(\n")
+                                withIndent {
+                                    for (icon in resAnnotation.icons) {
+                                        add("Icon(\n")
+                                        withIndent {
+                                            addStatement("src = %S,", icon.value)
+                                            if (icon.mimeType.isNotBlank()) {
+                                                addStatement("mimeType = %S,", icon.mimeType)
+                                            }
+                                            if (icon.size.isNotEmpty()) {
+                                                addStatement(icon.size.joinToString(prefix = "listOf(", postfix = "),") { "\"$it\""})
+                                            }
+                                            val filteredThemes = ArrayList<String>(icon.theme.size)
+                                            for (t in icon.theme) {
+                                                when (val lct = t.lowercase()) {
+                                                    "light" -> filteredThemes.add(lct)
+                                                    "dark" -> filteredThemes.add(lct)
+                                                    else -> logger.warn("Unsupported theme `$t'", function)
+                                                }
+                                            }
+                                            if (filteredThemes.isNotEmpty()) {
+                                                addStatement(icon.size.joinToString(prefix = "listOf(", postfix = "),") { "Icon.Theme.${it.myCapitalize()}"})
+                                            }
+                                        }
+                                        add(")\n")
+                                    }
+                                }
+                                add("),\n")
+                            }
+                            addStatement("meta = meta,")
+                        }
+                        add(")\n")
+                    }
+                    .beginControlFlow(") { req, parts ->")
+                    .add("val result = %M(\n", function.toMemberName())
+                    .withIndent {
+                        for ((p, c) in conversions) {
+                            addStatement("%L = parts.getValue(%S)%L,", p, p, c)
+                        }
+                        if (meta != null) {
+                            addStatement("_meta = req.meta,")
+                        }
+                    }
+                    .add(")\n")
+                    .add("return@addResourceTemplate ")
+                    .add(retCode)
+                    .endControlFlow()
+                    .build()
+            )
+            .build()
+    }
+
     private fun String.myCapitalize() = replaceFirstChar { if (it.isLowerCase()) it.titlecase(Locale.getDefault()) else it.toString() }
 
     companion object {
         private const val PACKAGE = "name.faerytea.mcp.annotations"
         private const val TOOL = "${PACKAGE}.Tool"
         private const val SAFE_TOOL = "${PACKAGE}.SafeTool"
+        private const val RES_TEMPLATE = "${PACKAGE}.ResourceTemplate"
 
         private const val KTX_JSON = "kotlinx.serialization.json"
     }

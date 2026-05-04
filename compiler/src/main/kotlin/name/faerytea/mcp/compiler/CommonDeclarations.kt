@@ -17,4 +17,8 @@ data class CommonDeclarations(
     val taskSupport: ClassName,
     val toolExecution: ClassName,
     val error: MemberName,
+    val resourceTemplate: ClassName,
+    val readResourceResult: ClassName,
+    val resourceContents: KSType,
+    val textResourceContents: ClassName,
 )
