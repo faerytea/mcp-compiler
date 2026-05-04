@@ -10,7 +10,7 @@ dependencies {
     compileOnly(project(":annotations"))
     ksp(project(":compiler"))
     val ktorVersion = "3.2.3"
-    implementation("io.modelcontextprotocol:kotlin-sdk:0.11.0")
+    implementation("io.modelcontextprotocol:kotlin-sdk:0.12.0")
     implementation("io.ktor:ktor-serialization-kotlinx-json:${ktorVersion}")
     implementation("io.ktor:ktor-server-cio-jvm:${ktorVersion}")
     implementation("io.ktor:ktor-server-content-negotiation:${ktorVersion}")

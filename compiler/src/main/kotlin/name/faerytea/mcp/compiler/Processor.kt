@@ -235,7 +235,7 @@ class Processor(
                 if (toolInputs.isNotEmpty()) {
                     add("inputSchema = %T(\n", commonDeclarations.toolSchema)
                     withIndent {
-                        beginControlFlow("%M", bjo)
+                        beginControlFlow("properties = %M", bjo)
                         for (param in toolInputs) {
                             val paramName = param.name!!.asString()
                             beginControlFlow("%M(%S)", pjo, paramName)
@@ -252,7 +252,7 @@ class Processor(
                         }
                         endControlFlow()
                         add(",\n")
-                        add(requiredParams.joinToString(", ", "listOf(", "),\n") { s -> "\"$s\"" })
+                        add(requiredParams.joinToString(", ", "required = listOf(", "),\n") { s -> "\"$s\"" })
                     }
                     add("),\n")
                 }
