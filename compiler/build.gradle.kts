@@ -23,7 +23,7 @@ mavenPublishing {
 
     pom {
         name.set("MCP Compiler KSP processor")
-        description.set("KSP processor for generating builerplate wrappers for MCP tools.")
+        description.set("KSP processor for generating boilerplate wrappers for MCP tools.")
         inceptionYear.set("2026")
         url.set("https://github.com/faerytea/mcp-compiler/")
         licenses {
