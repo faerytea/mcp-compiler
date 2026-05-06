@@ -76,3 +76,5 @@ fun readFile(
 ```
 
 See example project.
+
+[![Mvn](https://badges.mvnrepository.com/badge/name.faerytea.mcp.compiler/compiler/badge.svg?label=Mvn)](https://mvnrepository.com/artifact/name.faerytea.mcp.compiler/compiler)
