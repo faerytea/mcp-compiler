@@ -3,7 +3,7 @@ package name.faerytea.mcp.annotations
 /**
  * Marks function as tool.
  *
- * `add<FunctionName>Tool(server: Server)` function
+ * `add<FunctionName>ToolTo(server: Server)` function
  * will be generated.
  *
  * @see SafeTool

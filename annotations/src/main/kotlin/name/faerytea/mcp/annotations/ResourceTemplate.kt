@@ -3,12 +3,12 @@ package name.faerytea.mcp.annotations
 /**
  * Resource template.
  *
- * `add<FunctionName>ResourceTemplate(server: Server)` function
+ * `add<FunctionName>ResTemplateTo(server: Server)` function
  * will be generated.
  */
 @Target(AnnotationTarget.FUNCTION)
 @Retention(AnnotationRetention.SOURCE)
-annotation class ResourceTemplate(
+public annotation class ResourceTemplate(
     /**
      * URI template (see [RFC 6570](https://datatracker.ietf.org/doc/html/rfc6570)).
      * MCP Kotlin SDK supports only Level 1 templates
