@@ -21,4 +21,6 @@ data class CommonDeclarations(
     val readResourceResult: ClassName,
     val resourceContents: KSType,
     val textResourceContents: ClassName,
+    val genericAnnotations: ClassName,
+    val role: ClassName,
 )

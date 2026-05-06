@@ -23,7 +23,8 @@ fun main() {
         ),
         ServerOptions(
             capabilities = ServerCapabilities(
-                ServerCapabilities.Tools()
+                ServerCapabilities.Tools(),
+                ServerCapabilities.Resources()
             )
         )
     )
@@ -42,6 +43,8 @@ fun main() {
         addRecallToolTo(server) { "$it-file" }
         addRecallKeysToolTo(server) { "$it-file" }
     }
+    addFileResTemplateTo(server)
+    addPrimeResTemplateTo(server)
 
     embeddedServer(CIO, 8088) {
         install(CallLogging) {

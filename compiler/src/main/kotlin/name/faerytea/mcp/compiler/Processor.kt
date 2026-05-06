@@ -1,7 +1,6 @@
 package name.faerytea.mcp.compiler
 
 import com.google.devtools.ksp.KspExperimental
-import com.google.devtools.ksp.containingFile
 import com.google.devtools.ksp.getAnnotationsByType
 import com.google.devtools.ksp.getClassDeclarationByName
 import com.google.devtools.ksp.processing.*
@@ -11,7 +10,6 @@ import com.squareup.kotlinpoet.ksp.toClassName
 import com.squareup.kotlinpoet.ksp.toTypeName
 import com.squareup.kotlinpoet.ksp.writeTo
 import name.faerytea.mcp.annotations.Description
-import name.faerytea.mcp.annotations.ResourceAnnotation
 import name.faerytea.mcp.annotations.ResourceTemplate
 import name.faerytea.mcp.annotations.SafeTool
 import name.faerytea.mcp.annotations.Tool
@@ -77,6 +75,8 @@ class Processor(
             val readResourceResultCD = resolver.getClassDeclarationByName("io.modelcontextprotocol.kotlin.sdk.types.ReadResourceResult")
             val resourceContentsCD = resolver.getClassDeclarationByName("io.modelcontextprotocol.kotlin.sdk.types.ResourceContents")
             val textResourceContentsCD = resolver.getClassDeclarationByName("io.modelcontextprotocol.kotlin.sdk.types.TextResourceContents")
+            val genericAnnotationsCD = resolver.getClassDeclarationByName("io.modelcontextprotocol.kotlin.sdk.types.Annotations")
+            val roleCD = resolver.getClassDeclarationByName("io.modelcontextprotocol.kotlin.sdk.types.Role")
             if (serverCD == null
                 || toolSchemaCD == null
                 || toolAnnotationsCD == null
@@ -91,6 +91,8 @@ class Processor(
                 || readResourceResultCD == null
                 || resourceContentsCD == null
                 || textResourceContentsCD == null
+                || genericAnnotationsCD == null
+                || roleCD == null
             ) {
                 logger.error("Cannot find required MCP declarations")
                 return false
@@ -124,9 +126,18 @@ class Processor(
                 readResourceResult = readResourceResultCD.toClassName(),
                 resourceContents = resourceContentsCD.asType(emptyList()),
                 textResourceContents = textResourceContentsCD.toClassName(),
+                genericAnnotations = genericAnnotationsCD.toClassName(),
+                role = roleCD.toClassName(),
             )
         }
         return true
+    }
+
+    private data class FunctionsBundle(
+        val tools: List<Pair<KSFunctionDeclaration, Tool>>,
+        val resourceTemplates: List<Pair<KSFunctionDeclaration, ResourceTemplate>>,
+    ) {
+        fun isEmpty() = tools.isEmpty() && resourceTemplates.isEmpty()
     }
 
     @OptIn(KspExperimental::class)
@@ -137,20 +148,44 @@ class Processor(
               + resolver.getSymbolsWithAnnotation(SAFE_TOOL)
                 )
             .filterIsInstance<KSFunctionDeclaration>()
-            .groupBy { it.containingFile }
+            .mapNotNull { f ->
+                extractToolAnnotation(f)?.let { f to it }
+            }
+            .groupBy { it.first.containingFile }
         logger.info("Found ${declaredTools.size} tool files")
+        val declaredResTemplates = (
+                resolver.getSymbolsWithAnnotation(RES_TEMPLATE)
+                )
+            .filterIsInstance<KSFunctionDeclaration>()
+            .map { it to it.getAnnotationsByType(ResourceTemplate::class).first() }
+            .groupBy { it.first.containingFile }
+        logger.info("Found ${declaredTools.size} resource template files")
+        logger.info("Found ${declaredTools.size} resource template files")
+        val pile = buildMap {
+            for (f in declaredTools.keys + declaredResTemplates.keys) {
+                if (f == null) continue
+                put(
+                    f,
+                    FunctionsBundle(
+                        declaredTools[f] ?: emptyList(),
+                        declaredResTemplates[f] ?: emptyList(),
+                    )
+                )
+            }
+        }
+        logger.info("Processing ${pile.size} files")
         val notProcessed = ArrayList<KSAnnotated>()
-        for ((file, functions) in declaredTools) {
-            logger.info("Processing ${functions.size} tools in $file", file)
-            if (file == null) continue
+        for ((file, functions) in pile) {
+            logger.info("Processing ${functions.tools.size} tools & ${functions.resourceTemplates.size} resource templates", file)
             val originalFN = file.fileName.substringBefore('.')
             val fs = generateFile(
                 file.packageName.asString(),
-                "${originalFN}Tools",
+                "${originalFN}Things",
                 functions,
             )
             if (fs == null) {
-                notProcessed.addAll(functions)
+                notProcessed.addAll(functions.tools.map { it.first })
+                notProcessed.addAll(functions.resourceTemplates.map { it.first })
                 continue
             }
             fs.writeTo(codeGenerator, Dependencies(false, file))
@@ -158,25 +193,28 @@ class Processor(
         return notProcessed
     }
 
-    fun generateFile(
+    private fun generateFile(
         packageName: String,
         fileName: String,
-        functions: List<KSFunctionDeclaration>,
+        functions: FunctionsBundle,
     ): FileSpec? {
         if (functions.isEmpty()) return null
         val fs = FileSpec.builder(packageName, fileName)
             .addImport(
                 KTX_JSON,
                 "jsonPrimitive", "jsonArray", "JsonNull", "boolean", "int", "long", "float", "double")
-        functions.forEach {
-            generateToolSpec(it)?.let(fs::addFunction) ?: return null
+        functions.tools.forEach { (f, t) ->
+            generateToolSpec(f, t)?.let(fs::addFunction) ?: return null
+        }
+        functions.resourceTemplates.forEach { (f, rt) ->
+            generateResourceTemplateSpec(f, rt)?.let(fs::addFunction) ?: return null
         }
         logger.info("Generated file ${fs.name} with package ${fs.packageName}")
         return fs.build()
     }
 
     @OptIn(KspExperimental::class)
-    fun generateToolSpec(function: KSFunctionDeclaration): FunSpec? {
+    fun extractToolAnnotation(function: KSFunctionDeclaration): Tool? {
         val toolAnnotationNormal = function.getAnnotationsByType(Tool::class).firstOrNull()
         val toolAnnotationSafe = function.getAnnotationsByType(SafeTool::class).firstOrNull()
         if (toolAnnotationNormal != null && toolAnnotationSafe != null) {
@@ -184,7 +222,7 @@ class Processor(
             return null
         }
         check(toolAnnotationNormal != null || toolAnnotationSafe != null)
-        val toolAnnotation = toolAnnotationNormal
+        return toolAnnotationNormal
             ?: Tool(
                 name = toolAnnotationSafe!!.name,
                 description = toolAnnotationSafe.description,
@@ -192,6 +230,10 @@ class Processor(
                 annotation = ToolAnnotation(readOnlyHint = true, openWorldHint = false),
                 execution = Tool.Execution.OMIT,
             )
+    }
+
+    @OptIn(KspExperimental::class)
+    fun generateToolSpec(function: KSFunctionDeclaration, toolAnnotation: Tool): FunSpec? {
         val toolName = toolAnnotation.name.takeUnless { it.isBlank() } ?: function.simpleName.asString()
         val toolDescription = toolAnnotation.description.takeIf { it.isNotBlank() } ?: function.docString ?: ""
         val toolInputs = function.parameters.filter { it.name?.asString() != "_meta" }
@@ -565,12 +607,12 @@ class Processor(
     private val uriTemplateVariable = Regex("\\{[^{}]+}")
 
     @OptIn(KspExperimental::class)
-    fun genResourceSpec(function: KSFunctionDeclaration): FunSpec? {
-        val resAnnotation = function.getAnnotationsByType(ResourceTemplate::class).first()
+    fun generateResourceTemplateSpec(function: KSFunctionDeclaration, resAnnotation: ResourceTemplate): FunSpec? {
         // no real parser since L1 is too simple
         val foundParams = uriTemplateVariable.findAll(resAnnotation.value)
-            .map { resAnnotation.value.substring(it.range) }
+            .map { resAnnotation.value.substring(it.range.first + 1, it.range.last) }
             .toSet()
+        logger.info("Found ${foundParams.size} params: $foundParams", function)
         var meta: KSValueParameter? = null
         val conversions = LinkedHashMap<String, String>()
         for (arg in function.parameters) {
@@ -623,7 +665,7 @@ class Processor(
         val retCode = when {
             kotlinTypes.builtIns.stringType == retTp ->
                 CodeBlock.of(
-                    "%T(listOf(%T(result)))\n",
+                    "%T(listOf(%T(text = result, uri = req.uri)))\n",
                     commonDeclarations.readResourceResult,
                     commonDeclarations.textResourceContents,
                 )
@@ -660,7 +702,7 @@ class Processor(
                 CodeBlock.builder()
                     .add("server.addResourceTemplate(\n")
                     .withIndent {
-                        add("template = %T(\n")
+                        add("template = %T(\n", commonDeclarations.resourceTemplate)
                         withIndent {
                             addStatement("uriTemplate = %S,", resAnnotation.value)
                             val name = resAnnotation.name.takeUnless { it.isBlank() } ?: functionName
@@ -674,8 +716,28 @@ class Processor(
                             resAnnotation.title.takeUnless { it.isBlank() }?.let {
                                 addStatement("title = %S,", it)
                             }
-                            if (!resAnnotation.annotations.priority.isNaN() || resAnnotation.annotations.audience.isNotEmpty()) {
-                                // TODO wip
+                            val priority = Double.NaN //resAnnotation.annotations.priority TODO: Unexpected KSP failure
+                            val audience = resAnnotation.annotations.audience
+                            if (!priority.isNaN() || audience.isNotEmpty()) {
+                                add("annotations = %T(\n", commonDeclarations.genericAnnotations)
+                                withIndent {
+                                    if (!priority.isNaN()) {
+                                        if (priority !in 0.0..1.0) {
+                                            logger.error("Invalid priority ($priority)", function)
+                                        }
+                                        addStatement("priority = %L,", priority)
+                                    }
+                                    if (!audience.isNotEmpty()) {
+                                        add("audience = listOf(\n")
+                                        withIndent {
+                                            for (r in audience) {
+                                                add("%T.%L,", commonDeclarations.role, r.lowercase().myCapitalize())
+                                            }
+                                        }
+                                        add("),\n")
+                                    }
+                                }
+                                add("),\n")
                             }
                             if (resAnnotation.icons.isNotEmpty()) {
                                 add("icons = listOf(\n")
