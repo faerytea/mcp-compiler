@@ -23,4 +23,8 @@ data class CommonDeclarations(
     val textResourceContents: ClassName,
     val genericAnnotations: ClassName,
     val role: ClassName,
+    val prompt: ClassName,
+    val getPromptResult: ClassName,
+    val promptMessage: ClassName,
+    val promptArgument: ClassName,
 )

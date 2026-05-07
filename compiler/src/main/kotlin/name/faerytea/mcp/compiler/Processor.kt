@@ -10,6 +10,8 @@ import com.squareup.kotlinpoet.ksp.toClassName
 import com.squareup.kotlinpoet.ksp.toTypeName
 import com.squareup.kotlinpoet.ksp.writeTo
 import name.faerytea.mcp.annotations.Description
+import name.faerytea.mcp.annotations.Icon
+import name.faerytea.mcp.annotations.PromptTemplate
 import name.faerytea.mcp.annotations.ResourceTemplate
 import name.faerytea.mcp.annotations.SafeTool
 import name.faerytea.mcp.annotations.Tool
@@ -27,8 +29,8 @@ class Processor(
     private val pja = MemberName(KTX_JSON, "putJsonArray")
     private val put = MemberName(KTX_JSON, "put")
     private val add = MemberName(KTX_JSON, "add")
-    private val jsonObjectNullable = ClassName(KTX_JSON, "JsonObject")
-        .copy(nullable = true)
+    private val jsonObject = ClassName(KTX_JSON, "JsonObject")
+    private val jsonObjectNullable = jsonObject.copy(nullable = true)
     private var _kotlinTypes: KotlinTypes? = null
     private val kotlinTypes: KotlinTypes
         get() = _kotlinTypes ?: throw AssertionError("KotlinTypes not initialized!")
@@ -77,6 +79,10 @@ class Processor(
             val textResourceContentsCD = resolver.getClassDeclarationByName("io.modelcontextprotocol.kotlin.sdk.types.TextResourceContents")
             val genericAnnotationsCD = resolver.getClassDeclarationByName("io.modelcontextprotocol.kotlin.sdk.types.Annotations")
             val roleCD = resolver.getClassDeclarationByName("io.modelcontextprotocol.kotlin.sdk.types.Role")
+            val promptCD = resolver.getClassDeclarationByName("io.modelcontextprotocol.kotlin.sdk.types.Prompt")
+            val getPromptResultCD = resolver.getClassDeclarationByName("io.modelcontextprotocol.kotlin.sdk.types.GetPromptResult")
+            val promptMessageCD = resolver.getClassDeclarationByName("io.modelcontextprotocol.kotlin.sdk.types.PromptMessage")
+            val promptArgumentCD = resolver.getClassDeclarationByName("io.modelcontextprotocol.kotlin.sdk.types.PromptArgument")
             if (serverCD == null
                 || toolSchemaCD == null
                 || toolAnnotationsCD == null
@@ -93,6 +99,10 @@ class Processor(
                 || textResourceContentsCD == null
                 || genericAnnotationsCD == null
                 || roleCD == null
+                || promptCD == null
+                || getPromptResultCD == null
+                || promptMessageCD == null
+                || promptArgumentCD == null
             ) {
                 logger.error("Cannot find required MCP declarations")
                 return false
@@ -128,6 +138,10 @@ class Processor(
                 textResourceContents = textResourceContentsCD.toClassName(),
                 genericAnnotations = genericAnnotationsCD.toClassName(),
                 role = roleCD.toClassName(),
+                prompt = promptCD.toClassName(),
+                getPromptResult = getPromptResultCD.toClassName(),
+                promptMessage = promptMessageCD.toClassName(),
+                promptArgument = promptArgumentCD.toClassName(),
             )
         }
         return true
@@ -136,8 +150,11 @@ class Processor(
     private data class FunctionsBundle(
         val tools: List<Pair<KSFunctionDeclaration, Tool>>,
         val resourceTemplates: List<Pair<KSFunctionDeclaration, ResourceTemplate>>,
+        val promptTemplates: List<Pair<KSFunctionDeclaration, PromptTemplate>>,
     ) {
-        fun isEmpty() = tools.isEmpty() && resourceTemplates.isEmpty()
+        fun isEmpty() = tools.isEmpty()
+                && resourceTemplates.isEmpty()
+                && promptTemplates.isEmpty()
     }
 
     @OptIn(KspExperimental::class)
@@ -159,16 +176,23 @@ class Processor(
             .filterIsInstance<KSFunctionDeclaration>()
             .map { it to it.getAnnotationsByType(ResourceTemplate::class).first() }
             .groupBy { it.first.containingFile }
-        logger.info("Found ${declaredTools.size} resource template files")
-        logger.info("Found ${declaredTools.size} resource template files")
+        logger.info("Found ${declaredResTemplates.size} resource template files")
+        val declaredPromptTemplates = (
+                resolver.getSymbolsWithAnnotation(PROMPT_TEMPLATE)
+                )
+            .filterIsInstance<KSFunctionDeclaration>()
+            .map { it to it.getAnnotationsByType(PromptTemplate::class).first() }
+            .groupBy { it.first.containingFile }
+        logger.info("Found ${declaredPromptTemplates.size} prompt template files")
         val pile = buildMap {
-            for (f in declaredTools.keys + declaredResTemplates.keys) {
+            for (f in declaredTools.keys + declaredResTemplates.keys + declaredPromptTemplates.keys) {
                 if (f == null) continue
                 put(
                     f,
                     FunctionsBundle(
                         declaredTools[f] ?: emptyList(),
                         declaredResTemplates[f] ?: emptyList(),
+                        declaredPromptTemplates[f] ?: emptyList(),
                     )
                 )
             }
@@ -176,7 +200,12 @@ class Processor(
         logger.info("Processing ${pile.size} files")
         val notProcessed = ArrayList<KSAnnotated>()
         for ((file, functions) in pile) {
-            logger.info("Processing ${functions.tools.size} tools & ${functions.resourceTemplates.size} resource templates", file)
+            logger.info(
+                "Processing ${functions.tools.size} tools " +
+                    "& ${functions.resourceTemplates.size} resource templates " +
+                    "& ${functions.promptTemplates.size} prompt templates",
+                file,
+            )
             val originalFN = file.fileName.substringBefore('.')
             val fs = generateFile(
                 file.packageName.asString(),
@@ -186,6 +215,7 @@ class Processor(
             if (fs == null) {
                 notProcessed.addAll(functions.tools.map { it.first })
                 notProcessed.addAll(functions.resourceTemplates.map { it.first })
+                notProcessed.addAll(functions.promptTemplates.map { it.first })
                 continue
             }
             fs.writeTo(codeGenerator, Dependencies(false, file))
@@ -209,6 +239,9 @@ class Processor(
         functions.resourceTemplates.forEach { (f, rt) ->
             generateResourceTemplateSpec(f, rt)?.let(fs::addFunction) ?: return null
         }
+        functions.promptTemplates.forEach { (f, pt) ->
+            generatePromptTemplateSpec(f, pt)?.let(fs::addFunction) ?: return null
+        }
         logger.info("Generated file ${fs.name} with package ${fs.packageName}")
         return fs.build()
     }
@@ -230,6 +263,200 @@ class Processor(
                 annotation = ToolAnnotation(readOnlyHint = true, openWorldHint = false),
                 execution = Tool.Execution.OMIT,
             )
+    }
+
+    @OptIn(KspExperimental::class)
+    fun generatePromptTemplateSpec(function: KSFunctionDeclaration, promptAnnotation: PromptTemplate): FunSpec? {
+        val ptName = promptAnnotation.name.takeUnless { it.isBlank() } ?: function.simpleName.asString()
+        val ptDesc = promptAnnotation.description.takeUnless { it.isBlank() } ?: function.docString
+        val ptInputs = function.parameters.filter { it.name?.asString() != "_meta" }
+        val metaInput = function.parameters.find { it.name?.asString() == "_meta" }
+        if (metaInput != null) {
+            if (metaInput.type.resolve() != commonDeclarations.requestMetaNullable) {
+                logger.error("Request \$meta field must have type 'RequestMeta?'", metaInput)
+                return null
+            }
+        }
+        val params = buildMap(ptInputs.size) {
+            for (p in ptInputs) {
+                val conversion = when (val r = p.type.resolve()) {
+                    kotlinTypes.builtIns.byteType -> ".toByte()"
+                    kotlinTypes.builtIns.shortType -> ".toShort()"
+                    kotlinTypes.builtIns.intType -> ".toInt()"
+                    kotlinTypes.builtIns.longType -> ".toLong()"
+                    kotlinTypes.builtIns.floatType -> ".toFloat()"
+                    kotlinTypes.builtIns.doubleType -> ".toDouble()"
+                    kotlinTypes.builtIns.booleanType -> ".equals(\"true\", true)".also {
+                        logger.warn("${p.name?.asString()} declared as Boolean, only 'true' value will be considered as 'true'", p)
+                    }
+                    else -> if (r.isAssignableFrom(kotlinTypes.builtIns.stringType)) {
+                        ""
+                    } else {
+                        logger.error("Unsupported type $r", p)
+                        return null
+                    }
+                }
+                put(p.name!!.asString(), conversion to p.hasDefault)
+            }
+        }
+        val retTp = function.returnType?.resolve() ?: run {
+            logger.warn("Cannot find return type (not generated yet?)", function)
+            return null
+        }
+        val retTpCN = retTp.toClassName()
+        val retCode = when {
+            kotlinTypes.builtIns.stringType == retTp ->
+                CodeBlock.of(
+                    "%T(listOf(%T(role = %T.User, content = %T(result))))\n",
+                    commonDeclarations.getPromptResult,
+                    commonDeclarations.promptMessage,
+                    commonDeclarations.role,
+                    commonDeclarations.mediaContentText,
+                )
+            commonDeclarations.getPromptResult == retTpCN -> CodeBlock.of("result\n")
+            commonDeclarations.promptMessage == retTpCN ->
+                CodeBlock.of("%T(listOf(result))\n", commonDeclarations.getPromptResult)
+            commonDeclarations.contentBlock.isAssignableFrom(retTp) ->
+                CodeBlock.of(
+                    "%T(listOf(%T(role = %T.User, content = (result))))\n",
+                    commonDeclarations.getPromptResult,
+                    commonDeclarations.promptMessage,
+                    commonDeclarations.role,
+                )
+            else -> {
+                logger.error("Incompatible return type (not String nor ContentBlock nor CallToolResult)", function)
+                return null
+            }
+        }
+
+        val optionalArguments = ptInputs.filter { it.hasDefault }.mapTo(HashSet()) { it.name!!.asString() }
+        val optionalArgumentCount = optionalArguments.size
+
+        val body = CodeBlock.builder()
+            .add("server.addPrompt(\n")
+            .withIndent {
+                add("prompt = %T(\n", commonDeclarations.prompt)
+                withIndent {
+                    addStatement("name = %S,", ptName)
+                    if (ptDesc != null) {
+                        addStatement("description = %S,", ptDesc)
+                    }
+                    if (promptAnnotation.title.isNotBlank()) {
+                        addStatement("title = %S,", promptAnnotation.title)
+                    }
+                    if (ptInputs.isNotEmpty()) {
+                        add("arguments = listOf(\n")
+                        withIndent {
+                            for (input in ptInputs) {
+                                add("%T(\n", commonDeclarations.promptArgument)
+                                withIndent {
+                                    val name = input.name!!.asString()
+                                    addStatement("name = %S,", name)
+                                    val description = input.getAnnotationsByType(Description::class).firstOrNull()?.value ?: ""
+                                    if (description.isEmpty()) {
+                                        logger.warn("No description provided for '$name' (see @Description)", input)
+                                    } else {
+                                        addStatement("description = %S,", description)
+                                    }
+                                    addStatement("required = %L,", !input.hasDefault)
+                                    // TODO: No title for now
+                                }
+                                add("),\n")
+                            }
+                        }
+                        add("),\n")
+                    }
+                    addIcons(function, promptAnnotation.icons)
+                    addStatement("meta = meta,")
+                }
+                add(")\n")
+            }
+            .beginControlFlow(") { req ->")
+            .apply {
+                if (optionalArgumentCount == ptInputs.size) {
+                    // everything is optional
+                    addStatement("val arguments = req.arguments ?: emptyMap()")
+                } else {
+                    addStatement("val arguments = req.arguments ?: throw IllegalArgumentException(%S)", "No arguments provided!")
+                }
+            }
+            .apply {
+                if (optionalArgumentCount > 30) {
+                    logger.error("Too many optional arguments ($optionalArgumentCount > 30)", function)
+                    return null
+                }
+                val callMatrix = ArrayList<Set<String>>(1 shl optionalArgumentCount)
+                callMatrix.add(emptySet())
+                for ((name, value) in params) {
+                    val (conversion, isOptional) = value
+                    if (isOptional) {
+                        addStatement("val _%L_is_present = arguments.containsKey(%S)", name, name)
+                        beginControlFlow("val %L by lazy(LazyThreadSafetyMode.NONE)", name)
+                        addStatement("arguments[%S]!!%L", name, conversion)
+                        endControlFlow()
+                        val curSize = callMatrix.size
+                        for (i in 0 until curSize) {
+                            callMatrix.add(callMatrix[i] + name)
+                        }
+                    } else {
+                        addStatement("val %L = (arguments[%S] ?: throw IllegalArgumentException(%S))%L", name, name, "Parameter '$name' is required", conversion)
+                    }
+                }
+                if (callMatrix.size == 1) {
+                    // no defaults
+                    add("val result = %M(\n", function.toMemberName())
+                    withIndent {
+                        for (name in params.keys) {
+                            add("%L = %L,\n", name, name)
+                        }
+                        if (metaInput != null) {
+                            add("_meta = req.meta,\n")
+                        }
+                    }
+                    add(")\n")
+                } else {
+                    // Oh shit, HERE WE GO
+                    beginControlFlow("val result = when")
+                    for (s in callMatrix) {
+                        val condition = optionalArguments.joinToString(" && ", postfix = " -> ") {
+                            if (it in s) "_${it}_is_present" else "!_${it}_is_present"
+                        }
+                        add(condition)
+                        add("%M(\n", function.toMemberName())
+                        withIndent {
+                            for (name in params.keys)
+                                if (name in s || name !in optionalArguments)
+                                    add("%L = %L,\n", name, name)
+                            if (metaInput != null)
+                                add("_meta = req.meta,\n")
+                        }
+                        add(")\n")
+                    }
+                    addStatement("else -> throw AssertionError(\"unreachable\")\n")
+                    endControlFlow()
+                }
+                add(retCode)
+            }
+            .endControlFlow()
+            .build()
+
+        return FunSpec.builder("add${ptName.myCapitalize()}PromptTemplateTo")
+            .addParameter("server", commonDeclarations.server)
+            .addParameter(
+                ParameterSpec.builder("meta", jsonObjectNullable)
+                    .defaultValue("null")
+                    .build()
+            )
+            .addKdoc("@see %M\n", function.toMemberName())
+            .returns(Unit::class)
+            .addAnnotation(
+                AnnotationSpec.builder(Generated::class)
+                    .addMember("%S", "name.faerytea.mcp.compiler.Processor")
+                    .build()
+            )
+            .addModifiers(KModifier.PUBLIC)
+            .addCode(body)
+            .build()
     }
 
     @OptIn(KspExperimental::class)
@@ -271,6 +498,8 @@ class Processor(
                 null
             }
         }
+        val optionalArguments = toolInputs.filter { it.hasDefault }.mapTo(HashSet()) { it.name!!.asString() }
+        val optionalArgumentCount = optionalArguments.size
         val body = CodeBlock.builder()
             .add("server.addTool(\n")
             .withIndent {
@@ -336,11 +565,16 @@ class Processor(
                 add("meta = meta,\n")
             }
             .beginControlFlow(") { req ->")
-            .addStatement("val arguments = req.arguments ?: return@addTool %T.%M(%S)", commonDeclarations.callToolResult, commonDeclarations.error, "No arguments provided!")
+            .apply {
+                if (optionalArgumentCount == toolInputs.size) {
+                    // everything is optional
+                    addStatement("val arguments = req.arguments ?: %T(emptyMap())", jsonObject)
+                } else {
+                    addStatement("val arguments = req.arguments ?: return@addTool %T.%M(%S)", commonDeclarations.callToolResult, commonDeclarations.error, "No arguments provided!")
+                }
+            }
             .beginControlFlow("return@addTool try")
             .apply {
-                val optionalArguments = toolInputs.filter { it.hasDefault }.mapTo(HashSet()) { it.name!!.asString() }
-                val optionalArgumentCount = optionalArguments.size
                 if (optionalArgumentCount > 30) {
                     logger.error("Too many optional arguments ($optionalArgumentCount > 30)", function)
                     return null
@@ -606,7 +840,6 @@ class Processor(
 
     private val uriTemplateVariable = Regex("\\{[^{}]+}")
 
-    @OptIn(KspExperimental::class)
     fun generateResourceTemplateSpec(function: KSFunctionDeclaration, resAnnotation: ResourceTemplate): FunSpec? {
         // no real parser since L1 is too simple
         val foundParams = uriTemplateVariable.findAll(resAnnotation.value)
@@ -727,11 +960,11 @@ class Processor(
                                         }
                                         addStatement("priority = %L,", priority)
                                     }
-                                    if (!audience.isNotEmpty()) {
+                                    if (audience.isNotEmpty()) {
                                         add("audience = listOf(\n")
                                         withIndent {
                                             for (r in audience) {
-                                                add("%T.%L,", commonDeclarations.role, r.lowercase().myCapitalize())
+                                                add("%T.%L,\n", commonDeclarations.role, r.lowercase().myCapitalize())
                                             }
                                         }
                                         add("),\n")
@@ -739,36 +972,7 @@ class Processor(
                                 }
                                 add("),\n")
                             }
-                            if (resAnnotation.icons.isNotEmpty()) {
-                                add("icons = listOf(\n")
-                                withIndent {
-                                    for (icon in resAnnotation.icons) {
-                                        add("Icon(\n")
-                                        withIndent {
-                                            addStatement("src = %S,", icon.value)
-                                            if (icon.mimeType.isNotBlank()) {
-                                                addStatement("mimeType = %S,", icon.mimeType)
-                                            }
-                                            if (icon.size.isNotEmpty()) {
-                                                addStatement(icon.size.joinToString(prefix = "listOf(", postfix = "),") { "\"$it\""})
-                                            }
-                                            val filteredThemes = ArrayList<String>(icon.theme.size)
-                                            for (t in icon.theme) {
-                                                when (val lct = t.lowercase()) {
-                                                    "light" -> filteredThemes.add(lct)
-                                                    "dark" -> filteredThemes.add(lct)
-                                                    else -> logger.warn("Unsupported theme `$t'", function)
-                                                }
-                                            }
-                                            if (filteredThemes.isNotEmpty()) {
-                                                addStatement(icon.size.joinToString(prefix = "listOf(", postfix = "),") { "Icon.Theme.${it.myCapitalize()}"})
-                                            }
-                                        }
-                                        add(")\n")
-                                    }
-                                }
-                                add("),\n")
-                            }
+                            addIcons(function, resAnnotation.icons)
                             addStatement("meta = meta,")
                         }
                         add(")\n")
@@ -792,6 +996,46 @@ class Processor(
             .build()
     }
 
+    private fun CodeBlock.Builder.addIcons(
+        function: KSFunctionDeclaration,
+        icons: Array<Icon>
+    ) {
+        if (icons.isNotEmpty()) {
+            add("icons = listOf(\n")
+            withIndent {
+                for (icon in icons) {
+                    add("Icon(\n")
+                    withIndent {
+                        addStatement("src = %S,", icon.value)
+                        if (icon.mimeType.isNotBlank()) {
+                            addStatement("mimeType = %S,", icon.mimeType)
+                        }
+                        if (icon.size.isNotEmpty()) {
+                            addStatement(icon.size.joinToString(prefix = "listOf(", postfix = "),") { "\"$it\"" })
+                        }
+                        val filteredThemes = ArrayList<String>(icon.theme.size)
+                        for (t in icon.theme) {
+                            when (val lct = t.lowercase()) {
+                                "light" -> filteredThemes.add(lct)
+                                "dark" -> filteredThemes.add(lct)
+                                else -> logger.warn("Unsupported theme `$t'", function)
+                            }
+                        }
+                        if (filteredThemes.isNotEmpty()) {
+                            addStatement(
+                                icon.size.joinToString(
+                                    prefix = "listOf(",
+                                    postfix = "),"
+                                ) { "Icon.Theme.${it.myCapitalize()}" })
+                        }
+                    }
+                    add(")\n")
+                }
+            }
+            add("),\n")
+        }
+    }
+
     private fun String.myCapitalize() = replaceFirstChar { if (it.isLowerCase()) it.titlecase(Locale.getDefault()) else it.toString() }
 
     companion object {
@@ -799,6 +1043,7 @@ class Processor(
         private const val TOOL = "${PACKAGE}.Tool"
         private const val SAFE_TOOL = "${PACKAGE}.SafeTool"
         private const val RES_TEMPLATE = "${PACKAGE}.ResourceTemplate"
+        private const val PROMPT_TEMPLATE = "${PACKAGE}.PromptTemplate"
 
         private const val KTX_JSON = "kotlinx.serialization.json"
     }

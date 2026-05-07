@@ -24,11 +24,12 @@ fun main() {
         ServerOptions(
             capabilities = ServerCapabilities(
                 ServerCapabilities.Tools(),
-                ServerCapabilities.Resources()
+                ServerCapabilities.Resources(),
+                ServerCapabilities.Prompts(),
             )
         )
     )
-
+    addTranslateCodePromptTemplateTo(server)
     addReadFileToolTo(server)
     addReadFile2ToolTo(server)
     addAggregateToolTo(server)

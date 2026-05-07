@@ -1,6 +1,7 @@
 package name.faerytea.mcp.example
 
 import name.faerytea.mcp.annotations.Description
+import name.faerytea.mcp.annotations.PromptTemplate
 import name.faerytea.mcp.annotations.Tool
 import name.faerytea.mcp.annotations.ToolAnnotation
 import java.net.URL
@@ -58,3 +59,29 @@ fun fetch(
     @Description("URL")
     url: String
 ) = URL(url).openStream().reader().use { it.readText() }
+
+/**
+ * Convert code between programming languages
+ */
+@PromptTemplate
+fun translateCode(
+    originalLanguage: String,
+    targetLanguage: String,
+    content: String,
+    @Description("1 = keep structure, lower = more code shrinking, higher = simpler code")
+    verbosity: Int = 1,
+) = buildString {
+    append("Here's the piece of code in ")
+    append(originalLanguage)
+    appendLine(":")
+    append("```")
+    appendLine(originalLanguage.lowercase().trim())
+    appendLine(content)
+    appendLine("```")
+    appendLine("I want you to rewrite this code to $targetLanguage.")
+    if (verbosity > 1) appendLine("Write simple & verbose code, do not use complex shortcuts.")
+    if (verbosity > 2) appendLine("I have zero experience with $originalLanguage, so, please, annotate each line.")
+    if (verbosity == 1) appendLine("Keep code structure as close to original as possible.")
+    if (verbosity < 1) appendLine("And please, try to reduce code size.")
+    if (verbosity < 0) appendLine("Feel free to use dirty hacks.")
+}
