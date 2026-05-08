@@ -1,5 +1,6 @@
 plugins {
     kotlin("jvm")
+    id("application")
     alias(libs.plugins.ksp)
 }
 
@@ -17,6 +18,10 @@ dependencies {
     implementation("io.ktor:ktor-server-call-logging:${ktorVersion}")
     implementation("io.ktor:ktor-server-cors:${ktorVersion}")
     implementation("org.slf4j:slf4j-simple:2.0.17")
+}
+
+application {
+    mainClass.set("name.faerytea.mcp.example.MainKt")
 }
 
 kotlin {

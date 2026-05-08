@@ -23,6 +23,7 @@ data class CommonDeclarations(
     val textResourceContents: ClassName,
     val genericAnnotations: ClassName,
     val role: ClassName,
+    val icon: ClassName,
     val prompt: ClassName,
     val getPromptResult: ClassName,
     val promptMessage: ClassName,

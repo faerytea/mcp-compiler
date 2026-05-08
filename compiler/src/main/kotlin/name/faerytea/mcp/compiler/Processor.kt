@@ -79,6 +79,7 @@ class Processor(
             val textResourceContentsCD = resolver.getClassDeclarationByName("io.modelcontextprotocol.kotlin.sdk.types.TextResourceContents")
             val genericAnnotationsCD = resolver.getClassDeclarationByName("io.modelcontextprotocol.kotlin.sdk.types.Annotations")
             val roleCD = resolver.getClassDeclarationByName("io.modelcontextprotocol.kotlin.sdk.types.Role")
+            val iconCD = resolver.getClassDeclarationByName("io.modelcontextprotocol.kotlin.sdk.types.Icon")
             val promptCD = resolver.getClassDeclarationByName("io.modelcontextprotocol.kotlin.sdk.types.Prompt")
             val getPromptResultCD = resolver.getClassDeclarationByName("io.modelcontextprotocol.kotlin.sdk.types.GetPromptResult")
             val promptMessageCD = resolver.getClassDeclarationByName("io.modelcontextprotocol.kotlin.sdk.types.PromptMessage")
@@ -99,6 +100,7 @@ class Processor(
                 || textResourceContentsCD == null
                 || genericAnnotationsCD == null
                 || roleCD == null
+                || iconCD == null
                 || promptCD == null
                 || getPromptResultCD == null
                 || promptMessageCD == null
@@ -138,6 +140,7 @@ class Processor(
                 textResourceContents = textResourceContentsCD.toClassName(),
                 genericAnnotations = genericAnnotationsCD.toClassName(),
                 role = roleCD.toClassName(),
+                icon = iconCD.toClassName(),
                 prompt = promptCD.toClassName(),
                 getPromptResult = getPromptResultCD.toClassName(),
                 promptMessage = promptMessageCD.toClassName(),
@@ -949,7 +952,7 @@ class Processor(
                             resAnnotation.title.takeUnless { it.isBlank() }?.let {
                                 addStatement("title = %S,", it)
                             }
-                            val priority = Double.NaN //resAnnotation.annotations.priority TODO: Unexpected KSP failure
+                            val priority = Double.NaN // resAnnotation.annotations.priority // TODO: Unexpected KSP failure
                             val audience = resAnnotation.annotations.audience
                             if (!priority.isNaN() || audience.isNotEmpty()) {
                                 add("annotations = %T(\n", commonDeclarations.genericAnnotations)
@@ -1004,29 +1007,22 @@ class Processor(
             add("icons = listOf(\n")
             withIndent {
                 for (icon in icons) {
-                    add("Icon(\n")
+                    add("%T(\n", commonDeclarations.icon)
                     withIndent {
                         addStatement("src = %S,", icon.value)
                         if (icon.mimeType.isNotBlank()) {
                             addStatement("mimeType = %S,", icon.mimeType)
                         }
                         if (icon.size.isNotEmpty()) {
-                            addStatement(icon.size.joinToString(prefix = "listOf(", postfix = "),") { "\"$it\"" })
+                            addStatement(icon.size.joinToString(prefix = "sizes = listOf(", postfix = "),") { "\"$it\"" })
                         }
-                        val filteredThemes = ArrayList<String>(icon.theme.size)
-                        for (t in icon.theme) {
-                            when (val lct = t.lowercase()) {
-                                "light" -> filteredThemes.add(lct)
-                                "dark" -> filteredThemes.add(lct)
-                                else -> logger.warn("Unsupported theme `$t'", function)
-                            }
+                        val t = when {
+                            icon.theme.equals("light", true) -> "Light"
+                            icon.theme.equals("dark", true) -> "Dark"
+                            else -> null.also { logger.warn("Unsupported theme `${icon.theme}'", function) }
                         }
-                        if (filteredThemes.isNotEmpty()) {
-                            addStatement(
-                                icon.size.joinToString(
-                                    prefix = "listOf(",
-                                    postfix = "),"
-                                ) { "Icon.Theme.${it.myCapitalize()}" })
+                        if (t != null) {
+                            addStatement("theme = Icon.Theme.$t,")
                         }
                     }
                     add(")\n")

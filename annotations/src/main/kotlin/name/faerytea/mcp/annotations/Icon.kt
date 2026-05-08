@@ -16,8 +16,8 @@ annotation class Icon(
      */
     val size: Array<String> = [],
     /**
-     * List of supported themes.
+     * Theme.
      * Supported values are `dark` and `light`
      */
-    val theme: Array<String> = [],
+    val theme: String = "",
 )
