@@ -3,13 +3,13 @@
 # https://docs.gradle.org/current/userguide/platforms.html#sub::toml-dependencies-format
 
 [versions]
-kotlin = "2.3.10"
-kotlinxDatetime = "0.7.1"
+kotlin = "2.4.0"
+kotlinxDatetime = "0.8.0"
 kotlinxSerializationJSON = "1.11.0"
-kotlinxCoroutines = "1.10.2"
-ksp = "2.3.6"
-kotlinPoet = "2.3.0"
-mavenPub = "0.36.0"
+kotlinxCoroutines = "1.11.0"
+ksp = "2.3.12"
+kotlinPoet = "2.4.0"
+mavenPub = "0.37.0"
 
 [libraries]
 kotlinGradlePlugin = { module = "org.jetbrains.kotlin:kotlin-gradle-plugin", version.ref = "kotlin" }

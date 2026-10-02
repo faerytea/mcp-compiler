@@ -1,6 +1,5 @@
 package name.faerytea.mcp.example
 
-import io.ktor.util.encodeBase64
 import io.modelcontextprotocol.kotlin.sdk.types.BlobResourceContents
 import io.modelcontextprotocol.kotlin.sdk.types.ResourceContents
 import io.modelcontextprotocol.kotlin.sdk.types.TextResourceContents
@@ -11,6 +10,7 @@ import name.faerytea.mcp.annotations.Icon
 import name.faerytea.mcp.annotations.ResourceTemplate
 import java.nio.file.Files
 import java.nio.file.Paths
+import kotlin.io.encoding.Base64
 import kotlin.io.path.name
 import kotlin.io.path.pathString
 import kotlin.io.path.readText
@@ -55,7 +55,7 @@ fun file(path: String): ResourceContents {
                     )
                 } else {
                     BlobResourceContents(
-                        Files.readAllBytes(p).encodeBase64(),
+                        Base64.encode(Files.readAllBytes(p)),
                         uri,
                         mime,
                     )
